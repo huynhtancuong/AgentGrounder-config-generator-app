@@ -273,6 +273,6 @@ with col_preview:
     st.download_button(
         label="💾 Download YAML Config",
         data=yaml_string,
-        file_name=f"{dataset}_{scan_type}.yaml",
+        file_name=f"{dataset}_{rev_number}.yaml",
         mime="text/yaml"
     )
