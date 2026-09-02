@@ -22,8 +22,6 @@ with col_input:
     lang_dir = f"{base_data_path}/query/{subset_name}"
     data_dir = f"/data/{scan_type}_scans/"
 
-    output_dir = f"data/{dataset}/{scan_type}/{subset_name}/"
-
     pred_bbox_dir = f"{base_data_path}/object_lookup_table/{bounding_box_source}"
 
     if bounding_box_source == "pred":
@@ -33,6 +31,9 @@ with col_input:
         st.info("3D Segmentor will be used for generating bounding boxes.")
         pred_bbox_dir = ""
 
+    rev_number = st.number_input("Revision Number (to be appended to output directory)", value=1, step=1)
+
+    output_dir = f"/data/output/{dataset}/{scan_type}/{subset_name}/rev_{rev_number}/"
     
     # -----------------------------
     # 2. MODEL & SERVER CONFIG
@@ -95,20 +96,100 @@ with col_input:
         st.info("Input prompt will include full information of all objects in the scene.")
 
     st.write("**Agent Tools:**")
-    all_tools = [
-        "write_plan",
-        "see_image",
-        "see_image_from_specific_view",
-        "get_object_info",
-        "calculate_distance",
-        "find_new_object_in_scene"
+
+    # Tool Metadata Registry with declarative dependencies
+    TOOL_REGISTRY = [
+        {
+            "id": "write_plan",
+            "description": "Plan step-by-step reasoning actions",
+        },
+        {
+            "id": "see_image",
+            "description": "View overall scene visualization",
+            "requirements": [
+                {
+                    "check": lambda ctx: ctx.get("bounding_box_source") != "no bbox",
+                    "message": "Requires bounding box source to be not 'no bbox'.",
+                }
+            ],
+        },
+        {
+            "id": "see_image_from_specific_view",
+            "description": "View object from specific camera angle",
+            "requirements": [
+                {
+                    "check": lambda ctx: ctx.get("bounding_box_source") != "no bbox",
+                    "message": "Requires bounding box source to be not 'no bbox'.",
+                }
+            ],
+        },
+        {
+            "id": "get_object_info",
+            "description": "Get detailed bounding box and object information",
+            "requirements": [
+                {
+                    "check": lambda ctx: ctx.get("bounding_box_source") != "no bbox",
+                    "message": "Requires bounding box source to be not 'no bbox'.",
+                }
+            ],
+        },
+        {
+            "id": "calculate_distance",
+            "description": "Calculate Euclidean distance between objects",
+            "requirements": [
+                {
+                    "check": lambda ctx: ctx.get("bounding_box_source") != "no bbox",
+                    "message": "Requires bounding box source to be not 'no bbox'.",
+                }
+            ],
+        },
+        {
+            "id": "find_new_object_in_scene",
+            "description": "Segment and discover new objects in 3D scene",
+            "requirements": [
+                {
+                    "check": lambda ctx: ctx.get("estim_mode") == "predict",
+                    "message": "Requires Estimation Mode = 'predict'.",
+                }
+            ],
+        },
     ]
+
+    # Evaluation context for tool requirements
+    context = {
+        "estim_mode": estim_mode,
+        "bounding_box_source": bounding_box_source,
+        "scan_type": scan_type,
+        "dataset": dataset,
+    }
+
     col_t1, col_t2 = st.columns(2)
     selected_tools = []
-    for i, tool in enumerate(all_tools):
+    for i, tool_meta in enumerate(TOOL_REGISTRY):
         target_col = col_t1 if i % 2 == 0 else col_t2
-        if target_col.checkbox(tool, value=True):
-            selected_tools.append(tool)
+        tool_id = tool_meta["id"]
+
+        # Validate all requirements for this tool
+        unmet_requirements = [
+            req["message"]
+            for req in tool_meta.get("requirements", [])
+            if not req["check"](context)
+        ]
+        is_disabled = len(unmet_requirements) > 0
+        default_val = False if is_disabled else True
+
+        with target_col:
+            checked = st.checkbox(
+                tool_id,
+                value=default_val,
+                disabled=is_disabled,
+                help=tool_meta.get("description"),
+            )
+            if checked and not is_disabled:
+                selected_tools.append(tool_id)
+            if is_disabled:
+                for req_msg in unmet_requirements:
+                    st.info(f"`{tool_id}`: {req_msg}")
 
 # -----------------------------
 # 5. Generate Configuration Dictionary
