@@ -12,15 +12,21 @@ with col_input:
     # -----------------------------
     st.subheader("1. Input Settings")
     dataset = st.selectbox("Dataset", ["scanrefer", "nr3d"])
-    scan_type = st.selectbox("Scan Type", ["mesh", "pointcloud", "gaussian"])
-    subset_name = st.selectbox("Subset Name", ["validation_set_strats_10query", "validation_set_strats_60query", "validation_set_strats_120query", "validation_set_strats_1000query"])
+    scan_type = st.selectbox("Scan Type", ["mesh", "pc", "gaussians"])
+    subset_name = st.selectbox("Subset Name", ["validation_set_strats_scanrefer_10query", "validation_set_strats_scanrefer_60query", "validation_set_strats_scanrefer_120query", "validation_set_strats_scanrefer_1000query"])
     bounding_box_source = st.selectbox("Bounding Box Source", ["pred", "gt", "no bbox"])
 
 
     base_data_path = f"/preprocessed_data/{dataset}"
 
     lang_dir = f"{base_data_path}/query/{subset_name}"
-    data_dir = f"/data/{scan_type}_scans/"
+
+    if scan_type == "mesh":
+        data_dir = f"/data/mesh_scans/"
+    elif scan_type == "pc":
+        data_dir = f"/data/pointcloud_scans/"
+    elif scan_type == "gaussians":
+        data_dir = f"/data/gaussian_scans/"
 
     pred_bbox_dir = f"{base_data_path}/object_lookup_table/{bounding_box_source}"
 
@@ -31,9 +37,11 @@ with col_input:
         st.info("3D Segmentor will be used for generating bounding boxes.")
         pred_bbox_dir = ""
 
-    rev_number = st.number_input("Revision Number (to be appended to output directory)", value=1, step=1)
+    rev_number = st.text_input("Revision Number (to be appended to output directory)", value="1")
 
-    output_dir = f"/data/output/{dataset}/{scan_type}/{subset_name}/rev_{rev_number}/"
+    base_output_dir = st.text_input("Base Output Directory", value=f"/prediction_outputs/")
+
+    output_dir = f"{base_output_dir}{dataset}/{scan_type}/{subset_name}/rev_{rev_number}/"
     
     # -----------------------------
     # 2. MODEL & SERVER CONFIG
@@ -41,14 +49,16 @@ with col_input:
     st.subheader("2. VLM Model Configuration")
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        model_name = st.selectbox("Model Name", ["gemma4:31b",
+        model_name = st.selectbox("Model Name", [
                                                "qwen3.8:27b",
+                                                "gemma4:31b",
+                                                "gemma4:e4b",
                                                "qwen3.5:35b",
                                                "qwen3-vl:32b-instruct",
                                                "qwen2.4vl:72b"])
         temperature = st.slider("Temperature", 0.0, 1.0, 0.8, step=0.05)
     with col_m2:
-        base_url = st.text_input("Base URL", "http://192.168.0.221:11435,http://192.168.0.221:11436")
+        base_url = st.text_input("Base URL", "http://192.168.0.224:11706")
         num_ctx = st.number_input("Context Window (num_ctx)", value=16384, step=1024)
 
     # -----------------------------
@@ -61,7 +71,8 @@ with col_input:
                 )
     top_k = 0
     score_threshold = 0.0
-    vectorstore_dir = f"{base_data_path}/chromadb_data/mask3d_labels_{bounding_box_source}"
+    
+    vectorstore_dir = f"{base_data_path}/chromadb_data/mask3d_labels_{bounding_box_source}" if bounding_box_source != "no bbox" else ""
 
     if extr_mode == "embed":
         with st.expander("Embedding Mode Settings", expanded=True):
@@ -144,7 +155,7 @@ with col_input:
             ],
         },
         {
-            "id": "find_new_object_in_scene",
+            "id": "detect_unseen_objects",
             "description": "Segment and discover new objects in 3D scene",
             "requirements": [
                 {
@@ -203,8 +214,8 @@ config_data = {
         "num_ctx": num_ctx
     },
     "prompts": {
-        "inference_prompt": "!include inference_prompt.yaml",
-        "ov_caption_prompt": "!include ov_caption_prompt.yaml"
+        "inference_prompt": "!include ../../inference_prompt.yaml",
+        "ov_caption_prompt": "!include ../../ov_caption_prompt.yaml"
     },
     "rendering": {
         "use_image": True
@@ -226,13 +237,14 @@ config_data = {
             }
         } if estim_mode == "predict" else {}),
         "embedding_model": {
-            "name": "embeddinggemma:latest"
+            "name": "embeddinggemma:latest",
+            "base_url": base_url
         }
     },
     "agent": {
         "max_attempts": 5,
         "objects_info_strategy": objects_info_strategy,
-        "prompt": "!include inference_prompt_agent.yaml",
+        "prompt": "!include ../../inference_prompt_agent.yaml",
         "tools": selected_tools
     },
     "renderer": {
@@ -251,10 +263,10 @@ config_data = {
             "gt_bbox_dir": f"{base_data_path}/object_lookup_table/gt",
             "pred_bbox_dir": pred_bbox_dir,
             "data_dir": data_dir,
-            "val_file": "/root/Qwen2-VL/AgentGrounder/data/scannet/scannetv2_val.txt",
-            "open_vocab_captions_dir": f"{base_data_path}/open_vocab_captions_data/open_vocab_captions_v2",
+            # "val_file": "/root/Qwen2-VL/AgentGrounder/data/scannet/scannetv2_val.txt",
+            # "open_vocab_captions_dir": f"{base_data_path}/open_vocab_captions_data/open_vocab_captions_v2",
             "vectorstore_dir": vectorstore_dir,
-            "multi_view_projection_dir": f"{base_data_path}/multi_view_imgs_data/multi-view-projection-imgs_v3"
+            # "multi_view_projection_dir": f"{base_data_path}/multi_view_imgs_data/multi-view-projection-imgs_v3"
         }
     }
 }
@@ -262,6 +274,7 @@ config_data = {
 # Convert the config dictionary to a YAML string (Preserve the string directive format for !include)
 yaml_string = yaml.dump(config_data, sort_keys=False, default_flow_style=False)
 yaml_string = yaml_string.replace("'!include", "!include").replace("'", "")
+yaml_string = yaml_string.replace("[object]", '"[object]"')
 
 # -----------------------------
 # 6. PREVIEW & DOWNLOAD
@@ -273,6 +286,6 @@ with col_preview:
     st.download_button(
         label="💾 Download YAML Config",
         data=yaml_string,
-        file_name=f"{dataset}_{rev_number}.yaml",
+        file_name=f"{model_name}_{dataset}_{rev_number}_{scan_type}_{extr_mode}_{estim_mode}.yaml",
         mime="text/yaml"
     )
